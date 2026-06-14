@@ -85,6 +85,28 @@ For local builds or custom binaries, set `HERDR_REMOTE_BINARY` to a local file p
 HERDR_REMOTE_BINARY=target/release/herdr herdr --remote workbox
 ```
 
+## Smoothing a stuttering remote UI
+
+If a `herdr --remote` session feels laggy or stutters while typing or scrolling, the link is usually the bottleneck rather than Herdr. A few changes help, in order of impact:
+
+1. **Switch the render encoding to ANSI diffs.** By default `--remote` streams full semantic frames; `"ansi"` sends only the changed cells, which is much lighter over SSH:
+
+   ```toml
+   [remote]
+   render_encoding = "ansi"
+   ```
+
+   Or for a single session: `HERDR_RENDER_ENCODING=ansi herdr --remote workbox`. See [render encoding](/docs/configuration/#render-encoding).
+
+2. **Enable SSH compression** for the host. ANSI diffs compress well, and full-screen repaints (scrolling, focus changes) ship fewer bytes. In `~/.ssh/config`:
+
+   ```
+   Host workbox
+       Compression yes
+   ```
+
+3. **Prefer a low-jitter link.** Occasional spikes while typing into an *idle* pane are typically Wi-Fi jitter or radio power-saving, not Herdr. A wired connection on either end removes most of those spikes. Herdr has no predictive local echo, so each keystroke is a full round trip — a steadier link is the main lever for the remaining latency.
+
 ## Remote named sessions
 
 Use `--session` with `--remote` to attach to a named session on the remote host:

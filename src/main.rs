@@ -298,6 +298,12 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # your ssh config unchanged — this does not force keepalive off, it only stops
 # herdr from adding its own.
 # manage_ssh_config = true
+#
+# Render encoding for `herdr --remote` thin clients. "semantic" (default)
+# streams full frames and diffs locally; "ansi" streams server-side ANSI diffs,
+# which is lighter over SSH and reduces stutter on remote links. The
+# HERDR_RENDER_ENCODING env var overrides this. Applies on the next connection.
+# render_encoding = "semantic"
 
 [experimental]
 # Allow launching herdr from inside a herdr-managed pane.

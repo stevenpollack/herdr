@@ -427,11 +427,26 @@ impl Drop for TerminalGuard {
 // Handshake
 // ---------------------------------------------------------------------------
 
-fn requested_render_encoding() -> RenderEncoding {
-    match std::env::var("HERDR_RENDER_ENCODING").ok().as_deref() {
-        Some("terminal-ansi" | "terminal_ansi" | "ansi") => RenderEncoding::TerminalAnsi,
-        _ => RenderEncoding::SemanticFrame,
-    }
+fn requested_render_encoding(
+    config_encoding: crate::config::RemoteRenderEncoding,
+) -> RenderEncoding {
+    resolve_render_encoding(
+        std::env::var("HERDR_RENDER_ENCODING").ok().as_deref(),
+        config_encoding,
+    )
+}
+
+/// Resolve the client render encoding. A recognized `HERDR_RENDER_ENCODING`
+/// value wins; otherwise the `[remote] render_encoding` config selector is used.
+/// Both paths parse through `RemoteRenderEncoding::from_str`, the single source
+/// of truth for accepted spellings.
+fn resolve_render_encoding(
+    env: Option<&str>,
+    config: crate::config::RemoteRenderEncoding,
+) -> RenderEncoding {
+    env.and_then(|value| value.parse().ok())
+        .unwrap_or(config)
+        .to_wire()
 }
 
 fn requested_keybindings() -> ClientKeybindings {
@@ -568,19 +583,16 @@ enum ClientLoopEvent {
 ///
 /// This is the entry point called from `main.rs` when running in client mode.
 pub fn run_client() -> io::Result<()> {
-    run_client_with_mode(
-        requested_render_encoding(),
-        None,
-        None,
-        "connecting to server",
-    )
+    // `None` defers the encoding decision to `run_client_with_mode`, which
+    // resolves it from the config it already loads (env override still applies).
+    run_client_with_mode(None, None, None, "connecting to server")
 }
 
 /// Runs a direct terminal attach client.
 #[cfg(unix)]
 pub fn run_terminal_attach(terminal_id: String, takeover: bool) -> io::Result<()> {
     run_client_with_mode(
-        RenderEncoding::TerminalAnsi,
+        Some(RenderEncoding::TerminalAnsi),
         Some((terminal_id, takeover)),
         Some(AttachEscapeState::default()),
         "attaching to terminal",
@@ -598,7 +610,7 @@ pub fn run_terminal_attach(_terminal_id: String, _takeover: bool) -> io::Result<
 }
 
 fn run_client_with_mode(
-    requested_encoding: RenderEncoding,
+    requested_encoding: Option<RenderEncoding>,
     attach_request: Option<(String, bool)>,
     attach_escape: Option<AttachEscapeState>,
     log_message: &'static str,
@@ -606,6 +618,8 @@ fn run_client_with_mode(
     init_logging();
 
     let loaded_config = crate::config::Config::load();
+    let requested_encoding = requested_encoding
+        .unwrap_or_else(|| requested_render_encoding(loaded_config.config.remote.render_encoding));
     let mouse_capture = loaded_config.config.ui.mouse_capture;
     let mouse_scroll_lines = loaded_config.config.ui.mouse_scroll_lines();
     let redraw_on_focus_gained = loaded_config.config.ui.redraw_on_focus_gained;
@@ -1459,6 +1473,47 @@ mod tests {
                 restore_env_var(key, value);
             }
         }
+    }
+
+    #[test]
+    fn resolve_render_encoding_env_overrides_config() {
+        use crate::config::RemoteRenderEncoding;
+        // Recognized env value wins over a conflicting config selector.
+        assert_eq!(
+            resolve_render_encoding(Some("ansi"), RemoteRenderEncoding::Semantic),
+            RenderEncoding::TerminalAnsi
+        );
+        assert_eq!(
+            resolve_render_encoding(Some("semantic"), RemoteRenderEncoding::Ansi),
+            RenderEncoding::SemanticFrame
+        );
+        assert_eq!(
+            resolve_render_encoding(Some("terminal-ansi"), RemoteRenderEncoding::Semantic),
+            RenderEncoding::TerminalAnsi
+        );
+    }
+
+    #[test]
+    fn resolve_render_encoding_falls_back_to_config() {
+        use crate::config::RemoteRenderEncoding;
+        // Unset or unrecognized env falls back to the config selector.
+        assert_eq!(
+            resolve_render_encoding(None, RemoteRenderEncoding::Ansi),
+            RenderEncoding::TerminalAnsi
+        );
+        assert_eq!(
+            resolve_render_encoding(None, RemoteRenderEncoding::Semantic),
+            RenderEncoding::SemanticFrame
+        );
+        assert_eq!(
+            resolve_render_encoding(Some("bogus"), RemoteRenderEncoding::Ansi),
+            RenderEncoding::TerminalAnsi
+        );
+        // Default config selector preserves the historical SemanticFrame default.
+        assert_eq!(
+            resolve_render_encoding(None, RemoteRenderEncoding::default()),
+            RenderEncoding::SemanticFrame
+        );
     }
 
     #[cfg(unix)]

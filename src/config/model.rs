@@ -492,13 +492,66 @@ pub struct RemoteConfig {
     /// Add a keepalive fallback under the user's ssh config for the `--remote`
     /// bridge. Set false to run plain ssh unchanged. Default: true.
     pub manage_ssh_config: bool,
+    /// Render encoding for `herdr --remote` thin clients. `"semantic"` (default)
+    /// streams full frames and diffs locally; `"ansi"` streams server-side ANSI
+    /// diffs, which is lighter over SSH and reduces stutter on remote links. The
+    /// `HERDR_RENDER_ENCODING` env var overrides this. Applies on the next
+    /// `--remote` connection. Default: semantic.
+    pub render_encoding: RemoteRenderEncoding,
 }
 
 impl Default for RemoteConfig {
     fn default() -> Self {
         Self {
             manage_ssh_config: true,
+            render_encoding: RemoteRenderEncoding::default(),
         }
+    }
+}
+
+/// Config-side selector for the `--remote` render encoding. Kept separate from
+/// the wire [`crate::protocol::RenderEncoding`] so the user-facing config
+/// vocabulary stays decoupled from the protocol serialization format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(try_from = "String")]
+pub enum RemoteRenderEncoding {
+    /// Stream full semantic frames; the client diffs against its terminal.
+    #[default]
+    Semantic,
+    /// Stream server-side ANSI diffs. Lighter over SSH.
+    Ansi,
+}
+
+impl RemoteRenderEncoding {
+    /// Map the config selector onto the wire render encoding.
+    pub fn to_wire(self) -> crate::protocol::RenderEncoding {
+        match self {
+            Self::Semantic => crate::protocol::RenderEncoding::SemanticFrame,
+            Self::Ansi => crate::protocol::RenderEncoding::TerminalAnsi,
+        }
+    }
+}
+
+impl std::str::FromStr for RemoteRenderEncoding {
+    type Err = String;
+
+    /// Single source of truth for the accepted encoding spellings, shared by
+    /// the TOML config (`[remote] render_encoding`, via `try_from`) and the
+    /// `HERDR_RENDER_ENCODING` env override so the two cannot drift.
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "semantic" | "semantic-frame" => Ok(Self::Semantic),
+            "ansi" | "terminal-ansi" | "terminal_ansi" => Ok(Self::Ansi),
+            other => Err(format!("unknown remote render encoding: {other}")),
+        }
+    }
+}
+
+impl TryFrom<String> for RemoteRenderEncoding {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        value.parse()
     }
 }
 
@@ -734,6 +787,72 @@ channel = "preview"
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.update.channel, UpdateChannelConfig::Preview);
         assert_eq!(config.update.channel.as_str(), "preview");
+    }
+
+    #[test]
+    fn remote_render_encoding_defaults_semantic_and_parses() {
+        let default_config = Config::default();
+        assert_eq!(
+            default_config.remote.render_encoding,
+            RemoteRenderEncoding::Semantic
+        );
+        assert_eq!(
+            default_config.remote.render_encoding.to_wire(),
+            crate::protocol::RenderEncoding::SemanticFrame
+        );
+
+        let config: Config = toml::from_str(
+            r#"
+[remote]
+render_encoding = "ansi"
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.remote.render_encoding, RemoteRenderEncoding::Ansi);
+        assert_eq!(
+            config.remote.render_encoding.to_wire(),
+            crate::protocol::RenderEncoding::TerminalAnsi
+        );
+    }
+
+    #[test]
+    fn remote_render_encoding_accepts_terminal_ansi_alias() {
+        let config: Config = toml::from_str(
+            r#"
+[remote]
+render_encoding = "terminal-ansi"
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.remote.render_encoding, RemoteRenderEncoding::Ansi);
+    }
+
+    #[test]
+    fn remote_render_encoding_from_str_is_single_vocabulary() {
+        // `FromStr` is the one source of truth shared by config (`try_from`) and
+        // the client env override, so every accepted spelling must agree here.
+        for spelling in ["semantic", "semantic-frame"] {
+            assert_eq!(
+                spelling.parse::<RemoteRenderEncoding>(),
+                Ok(RemoteRenderEncoding::Semantic)
+            );
+        }
+        for spelling in ["ansi", "terminal-ansi", "terminal_ansi"] {
+            assert_eq!(
+                spelling.parse::<RemoteRenderEncoding>(),
+                Ok(RemoteRenderEncoding::Ansi)
+            );
+        }
+        assert!("nope".parse::<RemoteRenderEncoding>().is_err());
+
+        // The config path reaches the same vocabulary: `"semantic-frame"` (once
+        // env-only) now deserializes through `try_from` too.
+        let config: Config = toml::from_str("[remote]\nrender_encoding = \"semantic-frame\"\n")
+            .expect("semantic-frame should parse via the shared FromStr");
+        assert_eq!(
+            config.remote.render_encoding,
+            RemoteRenderEncoding::Semantic
+        );
     }
 
     #[test]

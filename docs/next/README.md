@@ -133,6 +133,8 @@ herdr --remote ssh://you@yourserver:2222
 
 Remote attach adds fallback SSH keepalives by default while preserving your own SSH config. Set `[remote].manage_ssh_config = false` to use plain `ssh`.
 
+If a remote session stutters, set `[remote].render_encoding = "ansi"` (or `HERDR_RENDER_ENCODING=ansi`) to stream lighter server-side ANSI diffs, and enable SSH `Compression yes`. See [persistence and remote docs](https://herdr.dev/docs/persistence-remote/#smoothing-a-stuttering-remote-ui).
+
 Direct attach connects your current terminal to one server-owned terminal:
 
 ```bash

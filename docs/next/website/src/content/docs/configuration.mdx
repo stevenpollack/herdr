@@ -113,6 +113,22 @@ manage_ssh_config = true
 
 When enabled, `herdr --remote` writes a private temporary SSH config that includes your `~/.ssh/config` and `/etc/ssh/ssh_config` first, then adds fallback `ServerAliveInterval` and `ServerAliveCountMax` values. Your own SSH keepalive settings win. Set `manage_ssh_config = false` to run the bridge through plain `ssh` without Herdr's generated config.
 
+### Render encoding
+
+`herdr --remote` runs a local thin client and streams the UI from the remote server. The render encoding controls what crosses the link:
+
+```toml
+[remote]
+render_encoding = "semantic"
+```
+
+- `"semantic"` (default) streams full semantic frames and lets the local client diff them against your terminal. Highest fidelity.
+- `"ansi"` streams server-side ANSI diffs, sending only the changed cells. This is lighter over SSH and reduces stutter on remote or higher-latency links.
+
+The `HERDR_RENDER_ENCODING` environment variable overrides this setting (`ansi` / `terminal-ansi` or `semantic`), so you can flip encoding for a single invocation without editing config. The encoding is negotiated once when the client connects, so a change applies on the next `--remote` connection, not mid-session.
+
+If a remote session feels laggy or stuttery, see [smoothing a stuttering remote UI](/docs/persistence-remote/#smoothing-a-stuttering-remote-ui).
+
 ## Keybindings
 
 For a guided introduction to the prefix and a vetted prefix-free setup, see [Keyboard](/docs/keyboard/).
